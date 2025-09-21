@@ -1,90 +1,35 @@
-import os
-import time
-from flask import Flask, request, jsonify, render_template, redirect, url_for
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.exc import OperationalError
+from flask import Flask, render_template, request, redirect, url_for
 
 app = Flask(__name__)
 
-# Read DB config from environment
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_NAME = os.getenv("DB_NAME", "todo_db")
-DB_USER = os.getenv("DB_USER", "todo_user")
-DB_PASS = os.getenv("DB_PASS", "todo_pass")
+# In-memory storage for simplicity
+todos = []
 
-app.config["SQLALCHEMY_DATABASE_URI"] = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-db = SQLAlchemy(app)
-
-class Todo(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(255), nullable=False)
-    done = db.Column(db.Boolean, default=False)
-
-    def to_dict(self):
-        return {"id": self.id, "title": self.title, "done": self.done}
-
-def wait_for_db(retries=8, delay=3):
-    for i in range(retries):
-        try:
-            # attempt to create engine connection
-            with app.app_context():
-                db.session.execute("SELECT 1")
-            app.logger.info("DB is available")
-            return
-        except OperationalError:
-            app.logger.warning(f"DB not ready yet, retry {i+1}/{retries}...")
-            time.sleep(delay)
-    app.logger.error("Could not connect to DB after retries.")
-
-@app.before_request
-def setup_db():
-    # Wait for DB then create tables
-    wait_for_db()
-    db.create_all()
-
-# HTML UI
-@app.route("/", methods=["GET"])
+# Home route
+@app.route('/')
 def index():
-    todos = Todo.query.order_by(Todo.id.desc()).all()
-    return render_template("index.html", todos=todos)
+    return render_template('index.html', todos=todos)
 
-# API endpoints
-@app.route("/api/todos", methods=["GET"])
-def get_todos():
-    todos = Todo.query.order_by(Todo.id.desc()).all()
-    return jsonify([t.to_dict() for t in todos])
+# Add a new task
+@app.route('/add', methods=['POST'])
+def add():
+    task = request.form.get('task')
+    if task:
+        todos.append(task)
+    return redirect(url_for('index'))
 
-@app.route("/api/todos", methods=["POST"])
-def add_todo():
-    data = request.get_json() or request.form
-    title = data.get("title")
-    if not title:
-        return jsonify({"error": "title required"}), 400
-    todo = Todo(title=title)
-    db.session.add(todo)
-    db.session.commit()
-    return jsonify(todo.to_dict()), 201
+# Delete a task
+@app.route('/delete/<int:task_id>')
+def delete(task_id):
+    if 0 <= task_id < len(todos):
+        todos.pop(task_id)
+    return redirect(url_for('index'))
 
-@app.route("/api/todos/<int:todo_id>", methods=["PUT"])
-def toggle_todo(todo_id):
-    todo = Todo.query.get_or_404(todo_id)
-    data = request.get_json() or {}
-    if "done" in data:
-        todo.done = bool(data["done"])
-    else:
-        todo.done = not todo.done
-    db.session.commit()
-    return jsonify(todo.to_dict())
+# Initialize the app (instead of before_first_request)
+def init_app():
+    print("To-Do App starting...")
 
-@app.route("/api/todos/<int:todo_id>", methods=["DELETE"])
-def delete_todo(todo_id):
-    todo = Todo.query.get_or_404(todo_id)
-    db.session.delete(todo)
-    db.session.commit()
-    return jsonify({"result": "deleted"})
-
-if __name__ == "__main__":
-    # Run on 0.0.0.0 so container exposes it
-    app.run(host="0.0.0.0", port=5000, debug=True)
+if __name__ == '__main__':
+    init_app()
+    # Run on 0.0.0.0 so Docker can expose the port
+    app.run(host='0.0.0.0', port=5000, debug=True)
