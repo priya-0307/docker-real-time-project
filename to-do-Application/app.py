@@ -38,7 +38,7 @@ def wait_for_db(retries=8, delay=3):
             time.sleep(delay)
     app.logger.error("Could not connect to DB after retries.")
 
-@app.before_first_request
+@app.before_request
 def setup_db():
     # Wait for DB then create tables
     wait_for_db()
